@@ -6,41 +6,67 @@ export default async function handler(req, res) {
     const { id } = req.query;
     const username = process.env.TENDERNED_USER;
     const password = process.env.TENDERNED_PASS;
-    const baseUrl = process.env.TENDERNED_URL;
+    const baseUrl =
+      process.env.TENDERNED_URL ||
+      "https://www.tenderned.nl/papi/tenderned-rs-tns/v2";
 
     if (!username || !password || !baseUrl) {
-      return res.status(500).json({ error: "Missing env vars" });
-    }
-
-    const auth = Buffer.from(`${username}:${password}`).toString("base64");
-    const url = `${baseUrl}/publicaties/${id}/public-xml`;
-
-    const response = await fetch(url, {
-      headers: {
-        Authorization: `Basic ${auth}`,
-        Accept: "application/xml",
-      },
-      cache: "no-store",
-      redirect: "follow",
-    });
-
-    if (!response.ok) {
-      return res.status(response.status).json({
-        error: `TenderNed API error: ${response.statusText}`,
-        status: response.status,
-        url,
+      return res.status(500).json({
+        error: "Missing env vars: TENDERNED_USER, TENDERNED_PASS, TENDERNED_URL",
       });
     }
 
-    const xml = await response.text();
+    const auth = Buffer.from(`${username}:${password}`).toString("base64");
 
-    // XML omzetten naar JSON
-    const parser = new XMLParser({ ignoreAttributes: false });
-    const jsonData = parser.parse(xml);
+    // --- Stap 1: probeer JSON van /publicaties/{id} ---
+    const jsonUrl = `${baseUrl}/publicaties/${id}`;
+    const jsonResp = await fetch(jsonUrl, {
+      headers: {
+        Authorization: `Basic ${auth}`,
+        Accept: "application/json",
+      },
+      cache: "no-store",
+    });
 
-    return res.status(200).json(jsonData);
+    let publication = null;
+    if (jsonResp.ok) {
+      publication = await jsonResp.json();
+    }
+
+    // --- Stap 2: fallback naar public-xml als JSON niet genoeg is ---
+    let publicationXml = null;
+    const xmlUrl = `${baseUrl}/publicaties/${id}/public-xml`;
+    const xmlResp = await fetch(xmlUrl, {
+      headers: {
+        Authorization: `Basic ${auth}`,
+        Accept: "*/*", // breder, TenderNed accepteert dit vaak
+      },
+      cache: "no-store",
+    });
+
+    if (xmlResp.ok) {
+      const xml = await xmlResp.text();
+      const parser = new XMLParser({ ignoreAttributes: false });
+      publicationXml = parser.parse(xml);
+    }
+
+    if (!publication && !publicationXml) {
+      return res.status(404).json({
+        error: "Geen details gevonden voor deze publicatie",
+        id,
+      });
+    }
+
+    return res.status(200).json({
+      id,
+      publication, // JSON detail van /publicaties/{id}
+      publicationXml, // fallback XML (geparsed naar JSON)
+    });
   } catch (error) {
-    console.error("TenderNed publicatie fetch error:", error);
-    return res.status(500).json({ error: "Internal server error" });
+    console.error("TenderNed full fetch error:", error);
+    return res.status(500).json({
+      error: "Internal server error",
+      details: error.message,
+    });
   }
 }
