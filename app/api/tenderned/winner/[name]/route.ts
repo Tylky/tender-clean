@@ -10,47 +10,69 @@ export async function GET(
   const password = process.env.TENDERNED_PASSWORD!;
   const auth = "Basic " + Buffer.from(`${username}:${password}`).toString("base64");
 
+  const parser = new XMLParser({ ignoreAttributes: false });
+
   try {
-    // Zoek naar alle publicaties van de laatste periode (kun je uitbreiden met filters)
-    const url = `https://www.tenderned.nl/papi/tenderned-rs-tns/v2/publicaties/search?onlyGunningProcedure=true&pageSize=20`;
-    const res = await fetch(url, {
+    // Stap 1: zoek gunning-publicaties
+    const searchUrl =
+      "https://www.tenderned.nl/papi/tenderned-rs-tns/v2/publicaties/search?onlyGunningProcedure=true&pageSize=10";
+
+    let searchRes = await fetch(searchUrl, {
       headers: {
         Authorization: auth,
-        Accept: "application/xml",
+        Accept: "application/xml;charset=UTF-8",
       },
       cache: "no-store",
     });
 
-    if (!res.ok) {
+    // fallback naar JSON
+    if (!searchRes.ok) {
+      searchRes = await fetch(searchUrl, {
+        headers: {
+          Authorization: auth,
+          Accept: "application/json",
+        },
+      });
+    }
+
+    if (!searchRes.ok) {
       return NextResponse.json(
-        { error: `TenderNed API error: ${res.statusText}`, status: res.status },
-        { status: res.status }
+        { error: `TenderNed API error: ${searchRes.statusText}`, status: searchRes.status },
+        { status: searchRes.status }
       );
     }
 
-    const xml = await res.text();
-    const parser = new XMLParser({ ignoreAttributes: false });
-    const json = parser.parse(xml);
+    const searchText = await searchRes.text();
+    const searchJson = parser.parse(searchText);
 
-    // Bepaal of er resultaten zijn
-    const results = json?.searchResult?.publicaties?.publicatie || [];
+    const results = searchJson?.searchResult?.publicaties?.publicatie || [];
     const matched: any[] = [];
 
-    // Doorloop elke publicatie
+    // Stap 2: loop door publicaties
     for (const pub of results) {
       const detailUrl = `https://www.tenderned.nl/papi/tenderned-rs-tns/v2/publicaties/${pub.publicatieId}/public-xml`;
-      const detailRes = await fetch(detailUrl, {
+
+      let detailRes = await fetch(detailUrl, {
         headers: {
           Authorization: auth,
-          Accept: "application/xml",
+          Accept: "application/xml;charset=UTF-8",
         },
       });
+
+      if (!detailRes.ok) {
+        detailRes = await fetch(detailUrl, {
+          headers: {
+            Authorization: auth,
+            Accept: "application/json",
+          },
+        });
+      }
+
       if (!detailRes.ok) continue;
 
-      const detailXml = await detailRes.text();
-      const detailJson = parser.parse(detailXml);
+      const detailText = await detailRes.text();
+      const detailJson = parser.parse(detailText);
 
-      // Zoek winnaars in efac:Organizations
       const orgs =
         detailJson?.ContractAwardNotice?.["ext:UBLExtensions"]?.["ext:UBLExtension"]?.[
           "ext:ExtensionContent"
@@ -63,7 +85,6 @@ export async function GET(
           )
         : [];
 
-      // Check of een van de namen overeenkomt
       if (names.some((n: string | null) => n && n.toLowerCase().includes(name.toLowerCase()))) {
         matched.push({
           publicatieId: pub.publicatieId,
