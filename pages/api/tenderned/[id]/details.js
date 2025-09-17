@@ -23,10 +23,10 @@ export default async function handler(req, res) {
     };
     const headersXml = {
       Authorization: `Basic ${auth}`,
-      Accept: "*/*", // belangrijk voor public-xml en Q&A
+      Accept: "*/*",
     };
 
-    // --- Publicatie details (JSON) ---
+    // --- Publicatie details (JSON basisinfo) ---
     let publication = null;
     const pubResp = await fetch(`${baseUrl}/publicaties/${id}`, {
       headers: headersJson,
@@ -36,7 +36,7 @@ export default async function handler(req, res) {
       publication = await pubResp.json();
     }
 
-    // --- Publicatie tekst (XML fallback) ---
+    // --- Publicatie XML (uitgebreide inhoud) ---
     let publicationXml = null;
     const pubXmlResp = await fetch(`${baseUrl}/publicaties/${id}/public-xml`, {
       headers: headersXml,
@@ -70,13 +70,52 @@ export default async function handler(req, res) {
       qa = parser.parse(xml);
     }
 
+    // --- Parsed velden uit de XML (voorbeeld, afhankelijk van XML-structuur) ---
+    let parsed = {};
+    if (publicationXml) {
+      try {
+        const notice = publicationXml?.ContractNotice || publicationXml?.ContractAwardNotice;
+
+        parsed = {
+          buyer: {
+            officialName: notice?.Buyer?.OfficialName || null,
+            legalForm: notice?.Buyer?.LegalForm || null,
+            activity: notice?.Buyer?.Activity || null,
+          },
+          procedure: {
+            title: notice?.Procedure?.Title || null,
+            description: notice?.Procedure?.Description || null,
+            procedureType: notice?.Procedure?.Type || null,
+            contractType: notice?.Procedure?.ContractType || null,
+            cpvCodes: notice?.Procedure?.CPVCodes || [],
+            estimatedValue: notice?.Procedure?.EstimatedValue || null,
+            duration: {
+              start: notice?.Procedure?.Duration?.StartDate || null,
+              end: notice?.Procedure?.Duration?.EndDate || null,
+            },
+          },
+          awardCriteria: Array.isArray(notice?.AwardCriteria?.Criterion)
+            ? notice.AwardCriteria.Criterion.map((c) => ({
+                type: c.Type,
+                name: c.Name,
+                description: c.Description,
+                weight: c["Gunningscriterium numerieke waarde"] || null,
+              }))
+            : [],
+        };
+      } catch (e) {
+        console.error("Parsing error:", e.message);
+      }
+    }
+
     // --- Alles combineren ---
     return res.status(200).json({
       id,
-      publication,    // JSON metadata
-      publicationXml, // Volledige tekst (uit XML)
-      documents,      // Bijlagen
-      qa              // Vraag & Antwoord
+      publication,
+      publicationXml,
+      documents,
+      qa,
+      parsed,
     });
   } catch (error) {
     console.error("TenderNed details fetch error:", error);
