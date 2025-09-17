@@ -8,8 +8,7 @@ export default async function handler(req, res) {
 
     if (!username || !password || !baseUrl) {
       return res.status(500).json({
-        error:
-          "Missing environment variables. Check TENDERNED_USER, TENDERNED_PASS and TENDERNED_URL.",
+        error: "Missing environment variables. Check TENDERNED_USER, TENDERNED_PASS and TENDERNED_URL."
       });
     }
 
@@ -34,7 +33,6 @@ export default async function handler(req, res) {
 
     const xmlData = await response.text();
 
-    // Antwoord als XML doorgeven
     res.setHeader("Content-Type", "application/xml");
     return res.status(200).send(xmlData);
   } catch (error) {
