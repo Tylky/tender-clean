@@ -62,4 +62,35 @@ export default async function handler(req, res) {
           partyNames = awardees.map(
             (a) => a?.["cac:PartyName"]?.["cbc:Name"]?.["#text"]
           );
-        } else i
+        } else if (awardees) {
+          partyNames = [
+            awardees?.["cac:PartyName"]?.["cbc:Name"]?.["#text"],
+          ];
+        }
+
+        if (
+          partyNames.some(
+            (p) => p && p.toLowerCase().includes(name.toLowerCase())
+          )
+        ) {
+          results.push({
+            id: pub.id,
+            title: pub.titel,
+            date: pub.datumPublicatie,
+            awardees: partyNames,
+            raw: json,
+          });
+        }
+      }
+    }
+
+    return res.status(200).json({
+      search: name,
+      count: results.length,
+      results,
+    });
+  } catch (err) {
+    console.error("Winner search error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
