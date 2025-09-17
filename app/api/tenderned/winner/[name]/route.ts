@@ -1,96 +1,99 @@
-// route.ts
 import { NextResponse } from "next/server";
 import { XMLParser } from "fast-xml-parser";
 
-const BASE_URL = "https://www.tenderned.nl/papi/tenderned-rs-tns/v2";
-const AUTH = "Basic " + Buffer.from(`${process.env.TENDERNED_USER}:${process.env.TENDERNED_PASS}`).toString("base64");
+const TENDERNED_BASE_URL =
+  "https://www.tenderned.nl/papi/tenderned-rs-tns/v2";
+const AUTH =
+  "Basic " +
+  Buffer.from(
+    `${process.env.TENDERNED_USERNAME}:${process.env.TENDERNED_PASSWORD}`
+  ).toString("base64");
 
 export async function GET(
-  req: Request,
+  request: Request,
   { params }: { params: { name: string } }
 ) {
-  const { name } = params;
+  const searchName = params.name.toLowerCase();
+
   try {
-    // Stap 1: publicaties ophalen via TenderNed GET
-    const publicatiesUrl = `${BASE_URL}/publicaties?page=0&size=50&onlyGunningProcedure=true`;
+    // 1. Zoek publicaties met gunning
+    const publicatiesUrl = `${TENDERNED_BASE_URL}/publicaties?onlyGunningProcedure=true&pageSize=50`;
+
     const resp = await fetch(publicatiesUrl, {
       headers: {
         Authorization: AUTH,
-        Accept: "application/xml"  // volg voorbeeldcode: XML
-      }
+        Accept: "application/xml;charset=UTF-8", // ✅ heel precies
+      },
     });
 
     if (!resp.ok) {
-      return NextResponse.json({
-        error: `TenderNed API error publicaties: ${resp.status} ${resp.statusText}`
-      }, { status: resp.status });
+      return NextResponse.json(
+        {
+          error: `TenderNed API error publicaties: ${resp.statusText}`,
+          status: resp.status,
+        },
+        { status: resp.status }
+      );
     }
 
-    const xmlPublicaties = await resp.text();
+    const xmlText = await resp.text();
     const parser = new XMLParser({ ignoreAttributes: false });
-    const jsonPublicaties = parser.parse(xmlPublicaties);
+    const data = parser.parse(xmlText);
 
-    // Haal de publicaties uit JSON
-    let pubs = jsonPublicaties?.publicaties?.publicatie;
-    if (!pubs) {
-      return NextResponse.json({ results: [] });
-    }
-    if (!Array.isArray(pubs)) {
-      pubs = [pubs];
-    }
+    // Publicatie IDs ophalen
+    const publicaties =
+      data?.publicaties?.publicatie || data?.publicatie || [];
+
+    const ids = Array.isArray(publicaties)
+      ? publicaties.map((p: any) => p.publicatieId)
+      : [publicaties.publicatieId];
 
     const results: any[] = [];
 
-    // Stap 2: Voor elke publicatie de details ophalen
-    for (const pub of pubs) {
-      const pubId = pub.publicatieId;
-      if (!pubId) continue;
+    // 2. Loop door alle publicatie IDs
+    for (const id of ids) {
+      const detailUrl = `${TENDERNED_BASE_URL}/publicaties/${id}/public-xml`;
 
-      const detailUrl = `${BASE_URL}/publicaties/${pubId}/public-xml`;
       const detailResp = await fetch(detailUrl, {
         headers: {
           Authorization: AUTH,
-          Accept: "application/xml"
-        }
+          Accept: "application/xml;charset=UTF-8", // ✅ idem
+        },
       });
 
       if (!detailResp.ok) continue;
 
       const detailXml = await detailResp.text();
-      const detailJson = parser.parse(detailXml);
+      const detail = parser.parse(detailXml);
 
-      // In TenderNed voorbeeldcode: hierin zitten de winnende partij(ijen)
-      const orgs = detailJson?.ContractAwardNotice
-        ?.["ext:UBLExtensions"]?.["ext:UBLExtension"]
-        ?.["ext:ExtensionContent"]?.["efext:EformsExtension"]
-        ?.["efac:Organizations"]?.["efac:Organization"];
+      // Zoek winnaar (PartyName)
+      const orgs =
+        detail?.ContractAwardNotice?.["efac:Organizations"]?.[
+          "efac:Organization"
+        ] || [];
 
-      if (!orgs) continue;
+      const organizations = Array.isArray(orgs) ? orgs : [orgs];
 
-      const orgArray = Array.isArray(orgs) ? orgs : [orgs];
-      for (const org of orgArray) {
-        const winnerName = org?.["efac:Company"]
-          ?.["cac:PartyName"]
-          ?.["cbc:Name"]
-          ?.["#text"];
-        if (winnerName && winnerName.toLowerCase().includes(name.toLowerCase())) {
+      for (const org of organizations) {
+        const partyName =
+          org?.["efac:Company"]?.["cac:PartyName"]?.["cbc:Name"]?.["#text"];
+
+        if (partyName && partyName.toLowerCase().includes(searchName)) {
           results.push({
-            publicatieId: pubId,
-            aanbestedingNaam: pub.aanbestedingNaam || pub.titel || null,
-            opdrachtgeverNaam: pub.opdrachtgeverNaam || null,
-            winnaar: winnerName
+            publicatieId: id,
+            name: partyName,
+            website: org?.["efac:Company"]?.["cbc:WebsiteURI"] || null,
+            address: org?.["efac:Company"]?.["cac:PostalAddress"] || null,
           });
-          // je kunt hier break; als je alleen 1 match per publicatie wilt
         }
       }
     }
 
-    return NextResponse.json({ query: name, results });
+    return NextResponse.json({ search: searchName, results });
   } catch (error: any) {
-    console.error("Error in winner route:", error);
-    return NextResponse.json({
-      error: "Internal server error",
-      details: error.message
-    }, { status: 500 });
+    return NextResponse.json(
+      { error: error.message || "Unexpected error" },
+      { status: 500 }
+    );
   }
 }
