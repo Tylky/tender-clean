@@ -9,81 +9,76 @@ const AUTH =
     `${process.env.TENDERNED_USERNAME}:${process.env.TENDERNED_PASSWORD}`
   ).toString("base64");
 
+async function fetchWithFallback(url: string) {
+  const headersList = [
+    "application/xml;charset=UTF-8",
+    "application/xml",
+    "text/xml",
+  ];
+
+  for (const accept of headersList) {
+    const resp = await fetch(url, {
+      headers: {
+        Authorization: AUTH,
+        Accept: accept,
+      },
+    });
+
+    if (resp.ok) {
+      return resp; // ✅ gelukt
+    }
+
+    if (resp.status !== 406) {
+      // Alleen bij 406 doorgaan met fallback
+      throw new Error(`TenderNed error: ${resp.status} ${resp.statusText}`);
+    }
+  }
+
+  throw new Error("TenderNed API blijft 406 geven voor alle Accept headers");
+}
+
 export async function GET(
   request: Request,
   { params }: { params: { name: string } }
 ) {
   const searchName = params.name.toLowerCase();
+  const parser = new XMLParser({ ignoreAttributes: false });
 
   try {
-    // 1. Zoek publicaties met gunning
     const publicatiesUrl = `${TENDERNED_BASE_URL}/publicaties?onlyGunningProcedure=true&pageSize=50`;
 
-    const resp = await fetch(publicatiesUrl, {
-      headers: {
-        Authorization: AUTH,
-        Accept: "application/xml;charset=UTF-8", // ✅ heel precies
-      },
-    });
-
-    if (!resp.ok) {
-      return NextResponse.json(
-        {
-          error: `TenderNed API error publicaties: ${resp.statusText}`,
-          status: resp.status,
-        },
-        { status: resp.status }
-      );
-    }
-
+    const resp = await fetchWithFallback(publicatiesUrl);
     const xmlText = await resp.text();
-    const parser = new XMLParser({ ignoreAttributes: false });
     const data = parser.parse(xmlText);
 
-    // Publicatie IDs ophalen
     const publicaties =
       data?.publicaties?.publicatie || data?.publicatie || [];
-
     const ids = Array.isArray(publicaties)
       ? publicaties.map((p: any) => p.publicatieId)
       : [publicaties.publicatieId];
 
     const results: any[] = [];
 
-    // 2. Loop door alle publicatie IDs
     for (const id of ids) {
       const detailUrl = `${TENDERNED_BASE_URL}/publicaties/${id}/public-xml`;
-
-      const detailResp = await fetch(detailUrl, {
-        headers: {
-          Authorization: AUTH,
-          Accept: "application/xml;charset=UTF-8", // ✅ idem
-        },
-      });
-
-      if (!detailResp.ok) continue;
+      const detailResp = await fetchWithFallback(detailUrl);
 
       const detailXml = await detailResp.text();
       const detail = parser.parse(detailXml);
 
-      // Zoek winnaar (PartyName)
       const orgs =
         detail?.ContractAwardNotice?.["efac:Organizations"]?.[
           "efac:Organization"
         ] || [];
-
       const organizations = Array.isArray(orgs) ? orgs : [orgs];
 
       for (const org of organizations) {
         const partyName =
           org?.["efac:Company"]?.["cac:PartyName"]?.["cbc:Name"]?.["#text"];
-
         if (partyName && partyName.toLowerCase().includes(searchName)) {
           results.push({
             publicatieId: id,
             name: partyName,
-            website: org?.["efac:Company"]?.["cbc:WebsiteURI"] || null,
-            address: org?.["efac:Company"]?.["cac:PostalAddress"] || null,
           });
         }
       }
