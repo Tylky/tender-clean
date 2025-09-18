@@ -1,3 +1,4 @@
+// app/api/tenderned/[id]/full/route.ts
 import { NextResponse } from "next/server";
 import { XMLParser } from "fast-xml-parser";
 
@@ -5,77 +6,99 @@ export async function GET(
   request: Request,
   { params }: { params: { id: string } }
 ) {
+  const { id } = params;
+  const username = process.env.TENDERNED_USER;
+  const password = process.env.TENDERNED_PASS;
+  const baseUrl =
+    process.env.TENDERNED_URL ||
+    "https://www.tenderned.nl/papi/tenderned-rs-tns/v2";
+
+  if (!username || !password) {
+    return NextResponse.json(
+      {
+        error: "Missing TENDERNED_USER or TENDERNED_PASS in environment variables",
+      },
+      { status: 500 }
+    );
+  }
+
+  const auth = Buffer.from(`${username}:${password}`).toString("base64");
+
   try {
-    const { id } = params;
+    // --- Stap 1: JSON fetch ---
+    const pubUrl = `${baseUrl}/publicaties/${id}`;
+    const pubResp = await fetch(pubUrl, {
+      headers: {
+        Authorization: `Basic ${auth}`,
+        Accept: "application/json",
+      },
+      cache: "no-store",
+    });
 
-    const username = process.env.TENDERNED_USER;
-    const password = process.env.TENDERNED_PASS;
-    const baseUrl =
-      process.env.TENDERNED_URL ||
-      "https://www.tenderned.nl/papi/tenderned-rs-tns/v2";
-
-    if (!username || !password) {
-      return NextResponse.json(
-        {
-          error: "Missing TENDERNED_USER or TENDERNED_PASS in environment variables",
-        },
-        { status: 500 }
-      );
+    let publication: any = null;
+    if (pubResp.ok) {
+      publication = await pubResp.json();
     }
 
-    const auth = Buffer.from(`${username}:${password}`).toString("base64");
+    // --- Stap 2: Documenten ---
+    const docUrl = `${baseUrl}/publicaties/${id}/documenten`;
+    const docResp = await fetch(docUrl, {
+      headers: {
+        Authorization: `Basic ${auth}`,
+        Accept: "application/json",
+      },
+      cache: "no-store",
+    });
 
-    // ✅ Helper functie voor JSON fetch
-    const fetchJson = async (url: string) => {
-      const res = await fetch(url, {
-        headers: {
-          Authorization: `Basic ${auth}`,
-          Accept: "application/json",
-        },
-        cache: "no-store",
-      });
-      if (!res.ok) return null;
-      return res.json();
-    };
-
-    // ✅ Stap 1: hoofd-publicatie JSON
-    const publication = await fetchJson(`${baseUrl}/publicaties/${id}`);
-
-    // ✅ Stap 2: documenten
-    const documents = await fetchJson(
-      `${baseUrl}/publicaties/${id}/documenten`
-    );
-
-    // ✅ Stap 3: vragen & antwoorden
-    const questions = await fetchJson(
-      `${baseUrl}/publicaties/${id}/vragen-en-antwoorden`
-    );
-
-    // ✅ Stap 4: publicatie XML
-    let xmlData = null;
-    try {
-      const xmlResp = await fetch(`${baseUrl}/publicaties/${id}/public-xml`, {
-        headers: {
-          Authorization: `Basic ${auth}`,
-          Accept: "*/*",
-        },
-        cache: "no-store",
-      });
-
-      if (xmlResp.ok) {
-        const xml = await xmlResp.text();
-        const parser = new XMLParser({ ignoreAttributes: false });
-        xmlData = parser.parse(xml);
-      }
-    } catch (err) {
-      console.error("XML fetch/parsing error:", err);
+    let documents: any = null;
+    if (docResp.ok) {
+      documents = await docResp.json();
     }
 
-    // ✅ Stap 5: extract lots (percelen) uit XML
+    // --- Stap 3: Questions (Nota's van inlichtingen) ---
+    const qUrl = `${baseUrl}/publicaties/${id}/vragen`;
+    const qResp = await fetch(qUrl, {
+      headers: {
+        Authorization: `Basic ${auth}`,
+        Accept: "application/json",
+      },
+      cache: "no-store",
+    });
+
+    let questions: any = null;
+    if (qResp.ok) {
+      const qJson = await qResp.json();
+      questions = (qJson.vragen || []).map((q: any) => ({
+        vraag: q.vraag || null,
+        antwoord: q.antwoord || null,
+        indiener: q.indienerNaam || null,
+        datum: q.datum || null,
+      }));
+    }
+
+    // --- Stap 4: XML ---
+    const xmlUrl = `${baseUrl}/publicaties/${id}/public-xml`;
+    const xmlResp = await fetch(xmlUrl, {
+      headers: {
+        Authorization: `Basic ${auth}`,
+        Accept: "*/*",
+      },
+      cache: "no-store",
+    });
+
+    let xmlData: any = null;
+    if (xmlResp.ok) {
+      const xml = await xmlResp.text();
+      const parser = new XMLParser({ ignoreAttributes: false });
+      xmlData = parser.parse(xml);
+    }
+
+    // --- Stap 5: Lots (percelen) uit XML ---
     let lots: any[] = [];
     try {
-      const lotData =
-        xmlData?.ContractAwardNotice?.["cac:ProcurementProjectLot"];
+      const contractNotice: any = (xmlData as any)?.ContractAwardNotice;
+      const lotData: any =
+        contractNotice?.["cac:ProcurementProjectLot"];
       const arr = Array.isArray(lotData) ? lotData : lotData ? [lotData] : [];
 
       lots = arr.map((lot: any) => {
@@ -100,7 +123,7 @@ export async function GET(
       console.error("Lot parsing error:", err);
     }
 
-    // ✅ Combineer alle data in één response
+    // --- Combineer en return ---
     return NextResponse.json({
       id,
       publication,
@@ -109,10 +132,10 @@ export async function GET(
       lots,
       xmlData,
     });
-  } catch (error: any) {
-    console.error("TenderNed API full fetch failed:", error);
+  } catch (err: any) {
+    console.error("TenderNed API full fetch failed:", err);
     return NextResponse.json(
-      { error: "TenderNed API full fetch failed", details: error.message },
+      { error: "TenderNed API full fetch failed", details: err.message },
       { status: 500 }
     );
   }
