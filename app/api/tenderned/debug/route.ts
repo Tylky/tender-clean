@@ -12,14 +12,18 @@ export async function GET() {
     );
   }
 
-  const url = "https://www.tenderned.nl/papi/tenderned-rs-tns/v2/publicaties?onlyGunningProcedure=true&pageSize=1";
+  // Test: pak 1 publicatie op met onlyGunningProcedure
+  const url =
+    "https://www.tenderned.nl/papi/tenderned-rs-tns/v2/publicaties?onlyGunningProcedure=true&pageSize=1";
 
   try {
     const res = await fetch(url, {
       method: "GET",
       headers: {
-        Authorization: "Basic " + Buffer.from(`${username}:${password}`).toString("base64"),
-        Accept: "application/xml", // TenderNed wil XML
+        Authorization:
+          "Basic " +
+          Buffer.from(`${username}:${password}`).toString("base64"),
+        Accept: "application/xml;charset=UTF-8",
       },
       cache: "no-store",
       redirect: "follow",
@@ -27,11 +31,26 @@ export async function GET() {
 
     const text = await res.text();
 
+    // Verzamel alle response headers
+    const headers: Record<string, string> = {};
+    res.headers.forEach((value, key) => {
+      headers[key] = value;
+    });
+
     return NextResponse.json({
-      status: res.status,
-      ok: res.ok,
-      contentType: res.headers.get("content-type"),
-      bodySample: text.slice(0, 500), // alleen eerste 500 chars om response te inspecteren
+      request: {
+        url,
+        headers: {
+          Authorization: "[REDACTED]", // niet loggen ivm veiligheid
+          Accept: "application/xml;charset=UTF-8",
+        },
+      },
+      response: {
+        status: res.status,
+        ok: res.ok,
+        headers,
+        body: text, // hele body tonen (kan groot zijn!)
+      },
     });
   } catch (err: any) {
     return NextResponse.json(
