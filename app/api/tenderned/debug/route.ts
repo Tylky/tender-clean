@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import fetch from "node-fetch";
 
 const BASE_URL = "https://www.tenderned.nl/papi/tenderned-rs-tns/v2";
 
