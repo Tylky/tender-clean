@@ -1,43 +1,41 @@
+// app/api/tenderned/debug/route.ts
 import { NextResponse } from "next/server";
 
 export async function GET() {
-  const username = process.env.TN_USERNAME;
-  const password = process.env.TN_PASSWORD;
+  const username = process.env.TENDERNED_USER;
+  const password = process.env.TENDERNED_PASS;
 
   if (!username || !password) {
     return NextResponse.json(
-      { error: "Missing TN_USERNAME or TN_PASSWORD in environment variables" },
+      { error: "Missing TENDERNED_USER or TENDERNED_PASS in environment variables" },
       { status: 500 }
     );
   }
 
-  const url =
-    "https://www.tenderned.nl/papi/tenderned-rs-tns/v2/publicaties?onlyGunningProcedure=true&pageSize=5";
+  const url = "https://www.tenderned.nl/papi/tenderned-rs-tns/v2/publicaties?onlyGunningProcedure=true&pageSize=1";
 
   try {
-    const response = await fetch(url, {
+    const res = await fetch(url, {
       method: "GET",
-      cache: "no-store",
       headers: {
-        Authorization:
-          "Basic " +
-          Buffer.from(`${username}:${password}`).toString("base64"),
-        Accept: "application/xml",          // we vragen expliciet om XML
-        "Content-Type": "application/xml",  // idem, zodat TenderNed niet klaagt
+        Authorization: "Basic " + Buffer.from(`${username}:${password}`).toString("base64"),
+        Accept: "application/xml", // TenderNed wil XML
       },
+      cache: "no-store",
+      redirect: "follow",
     });
 
-    const text = await response.text();
+    const text = await res.text();
 
     return NextResponse.json({
-      status: response.status,
-      ok: response.ok,
-      headers: Object.fromEntries(response.headers.entries()),
-      body: text.substring(0, 2000), // alleen eerste 2000 chars voor debug
+      status: res.status,
+      ok: res.ok,
+      contentType: res.headers.get("content-type"),
+      bodySample: text.slice(0, 500), // alleen eerste 500 chars om response te inspecteren
     });
-  } catch (error: any) {
+  } catch (err: any) {
     return NextResponse.json(
-      { error: "TenderNed API request failed", details: error.message },
+      { error: "TenderNed API error (debug)", details: err.message },
       { status: 500 }
     );
   }
