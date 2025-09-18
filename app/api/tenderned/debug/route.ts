@@ -1,60 +1,44 @@
 import { NextResponse } from "next/server";
 
-const BASE_URL = "https://www.tenderned.nl/papi/tenderned-rs-tns/v2";
-
 export async function GET() {
-  const username = process.env.TENDERNED_USERNAME!;
-  const password = process.env.TENDERNED_PASSWORD!;
+  const username = process.env.TN_USERNAME;
+  const password = process.env.TN_PASSWORD;
+
+  if (!username || !password) {
+    return NextResponse.json(
+      { error: "Missing TN_USERNAME or TN_PASSWORD in environment variables" },
+      { status: 500 }
+    );
+  }
+
+  const url =
+    "https://www.tenderned.nl/papi/tenderned-rs-tns/v2/publicaties?onlyGunningProcedure=true&pageSize=5";
 
   try {
-    // Haal de eerste 10 gunningspublicaties op
-    const res = await fetch(
-      `${BASE_URL}/publicaties/search?onlyGunningProcedure=true&pageSize=10`,
-      {
-        headers: {
-          Accept: "application/xml",
-        },
-        // Basic auth
-        method: "GET",
-        cache: "no-store",
-        credentials: "include",
-        headers: {
-          Authorization:
-            "Basic " +
-            Buffer.from(`${username}:${password}`).toString("base64"),
-          Accept: "application/xml",
-        },
-      }
+    const response = await fetch(url, {
+      method: "GET",
+      cache: "no-store",
+      headers: {
+        Authorization:
+          "Basic " +
+          Buffer.from(`${username}:${password}`).toString("base64"),
+        Accept: "application/xml",          // we vragen expliciet om XML
+        "Content-Type": "application/xml",  // idem, zodat TenderNed niet klaagt
+      },
+    });
+
+    const text = await response.text();
+
+    return NextResponse.json({
+      status: response.status,
+      ok: response.ok,
+      headers: Object.fromEntries(response.headers.entries()),
+      body: text.substring(0, 2000), // alleen eerste 2000 chars voor debug
+    });
+  } catch (error: any) {
+    return NextResponse.json(
+      { error: "TenderNed API request failed", details: error.message },
+      { status: 500 }
     );
-
-    if (!res.ok) {
-      return NextResponse.json({
-        error: `TenderNed API error: ${res.status} ${res.statusText}`,
-      });
-    }
-
-    const xml = await res.text();
-
-    // Pak de PartyName blokken eruit
-    const matches = [...xml.matchAll(/<cac:PartyName>[\s\S]*?<\/cac:PartyName>/g)];
-
-    const parsed = matches.map((m) => {
-      // Extract de <cbc:Name> inhoud
-      const nameMatch = m[0].match(/<cbc:Name[^>]*>([^<]+)<\/cbc:Name>/);
-      return {
-        raw: m[0],
-        name: nameMatch ? nameMatch[1].trim() : null,
-      };
-    });
-
-    return NextResponse.json({
-      count: parsed.length,
-      results: parsed,
-    });
-  } catch (err: any) {
-    return NextResponse.json({
-      error: "TenderNed API call failed",
-      details: err.message,
-    });
   }
 }
