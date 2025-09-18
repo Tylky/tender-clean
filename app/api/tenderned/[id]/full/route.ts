@@ -6,25 +6,23 @@ const BASE_URL = "https://www.tenderned.nl/papi/tenderned-rs-tns/v2";
 
 function getAuthHeader() {
   const username = process.env.TENDERNED_USER;
-  const password = process.env.TENDERNED_PASS;
+  const password = process.env.TENDERNED_PASSWORD;
   if (!username || !password) {
-    throw new Error("Missing TenderNed credentials in env vars");
+    throw new Error("Missing TENDERNED_USER or TENDERNED_PASSWORD in environment variables");
   }
-  return (
-    "Basic " + Buffer.from(`${username}:${password}`).toString("base64")
-  );
+  return "Basic " + Buffer.from(`${username}:${password}`).toString("base64");
 }
 
 async function fetchJson(url: string) {
   const res = await fetch(url, {
     headers: {
       Authorization: getAuthHeader(),
-      Accept: "application/json;charset=UTF-8",
+      Accept: "application/json",
     },
     cache: "no-store",
   });
   if (!res.ok) {
-    throw new Error(`JSON fetch failed ${res.status}: ${await res.text()}`);
+    throw new Error(`JSON fetch failed ${res.status}: ${res.statusText}`);
   }
   return res.json();
 }
@@ -38,29 +36,41 @@ async function fetchXml(url: string) {
     cache: "no-store",
   });
   if (!res.ok) {
-    throw new Error(`XML fetch failed ${res.status}: ${await res.text()}`);
+    throw new Error(`XML fetch failed ${res.status}: ${res.statusText}`);
   }
   const text = await res.text();
-  const parser = new XMLParser({
-    ignoreAttributes: false,
-    attributeNamePrefix: "@_",
-  });
+  const parser = new XMLParser({ ignoreAttributes: false });
   return parser.parse(text);
 }
 
-export async function GET(
-  req: Request,
-  { params }: { params: { id: string } }
-) {
+// Fouttolerante wrappers
+async function safeFetchJson(url: string) {
+  try {
+    return await fetchJson(url);
+  } catch (err: any) {
+    if (err.message.includes("404")) return null;
+    return { error: err.message };
+  }
+}
+
+async function safeFetchXml(url: string) {
+  try {
+    return await fetchXml(url);
+  } catch (err: any) {
+    if (err.message.includes("404")) return null;
+    return { error: err.message };
+  }
+}
+
+export async function GET(req: Request, { params }: { params: { id: string } }) {
   const { id } = params;
 
   try {
-    // Fetch alle tabjes parallel
     const [publication, documents, questions, xmlData] = await Promise.all([
-      fetchJson(`${BASE_URL}/publicaties/${id}/publicatie`),
-      fetchJson(`${BASE_URL}/publicaties/${id}/documenten`),
-      fetchJson(`${BASE_URL}/publicaties/${id}/vragen`),
-      fetchXml(`${BASE_URL}/publicaties/${id}/public-xml`),
+      safeFetchJson(`${BASE_URL}/publicaties/${id}/publicatie`),
+      safeFetchJson(`${BASE_URL}/publicaties/${id}/documenten`),
+      safeFetchJson(`${BASE_URL}/publicaties/${id}/vragen`),
+      safeFetchXml(`${BASE_URL}/publicaties/${id}/public-xml`),
     ]);
 
     return NextResponse.json({
