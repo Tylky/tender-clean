@@ -24,8 +24,8 @@ export async function GET(
 
     const auth = Buffer.from(`${username}:${password}`).toString("base64");
 
-    // helper fetch-functie
-    async function fetchJson(url: string) {
+    // ✅ helper als const arrow function
+    const fetchJson = async (url: string) => {
       const res = await fetch(url, {
         headers: {
           Authorization: `Basic ${auth}`,
@@ -35,9 +35,9 @@ export async function GET(
       });
       if (!res.ok) return null;
       return res.json();
-    }
+    };
 
-    // 1. Basisdetails
+    // 1. Publication details
     const publication = await fetchJson(`${baseUrl}/publicaties/${id}`);
 
     // 2. Documenten
@@ -61,7 +61,6 @@ export async function GET(
       xmlData = parser.parse(xmlText);
     }
 
-    // Als alles faalt
     if (!publication && !documents && !questions && !xmlData) {
       return NextResponse.json(
         { error: "Geen gegevens gevonden voor publicatie", id },
