@@ -4,97 +4,77 @@ import { XMLParser } from "fast-xml-parser";
 
 const BASE_URL = "https://www.tenderned.nl/papi/tenderned-rs-tns/v2";
 
+function getAuthHeader() {
+  const username = process.env.TENDERNED_USER;
+  const password = process.env.TENDERNED_PASS;
+  if (!username || !password) {
+    throw new Error("Missing TenderNed credentials in env vars");
+  }
+  return (
+    "Basic " + Buffer.from(`${username}:${password}`).toString("base64")
+  );
+}
+
+async function fetchJson(url: string) {
+  const res = await fetch(url, {
+    headers: {
+      Authorization: getAuthHeader(),
+      Accept: "application/json;charset=UTF-8",
+    },
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    throw new Error(`JSON fetch failed ${res.status}: ${await res.text()}`);
+  }
+  return res.json();
+}
+
+async function fetchXml(url: string) {
+  const res = await fetch(url, {
+    headers: {
+      Authorization: getAuthHeader(),
+      Accept: "application/xml",
+    },
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    throw new Error(`XML fetch failed ${res.status}: ${await res.text()}`);
+  }
+  const text = await res.text();
+  const parser = new XMLParser({
+    ignoreAttributes: false,
+    attributeNamePrefix: "@_",
+  });
+  return parser.parse(text);
+}
+
 export async function GET(
   req: Request,
   { params }: { params: { id: string } }
 ) {
-  const username = process.env.TENDERNED_USER;
-  const password = process.env.TENDERNED_PASS;
-
-  if (!username || !password) {
-    return NextResponse.json(
-      { error: "Missing TenderNed credentials" },
-      { status: 500 }
-    );
-  }
-
-  const authHeader =
-    "Basic " + Buffer.from(`${username}:${password}`).toString("base64");
-
-  const url = `${BASE_URL}/publicaties/${params.id}`;
+  const { id } = params;
 
   try {
-    // Eerste poging: JSON
-    let res = await fetch(url, {
-      headers: {
-        Authorization: authHeader,
-        Accept: "application/json;charset=UTF-8",
-      },
-    });
-
-    let body: any;
-    let contentType = res.headers.get("content-type") || "";
-
-    if (res.status === 406 || !contentType.includes("json")) {
-      // Tweede poging: XML
-      res = await fetch(url, {
-        headers: {
-          Authorization: authHeader,
-          Accept: "application/xml;charset=UTF-8",
-        },
-      });
-
-      if (!res.ok) {
-        throw new Error(`Fallback XML fetch failed: ${res.status}`);
-      }
-
-      const xmlText = await res.text();
-      const parser = new XMLParser({ ignoreAttributes: false });
-      body = parser.parse(xmlText);
-    } else {
-      body = await res.json();
-    }
-
-    // Optioneel: documenten ophalen
-    let documents: any[] = [];
-    try {
-      const docsUrl = `${BASE_URL}/publicaties/${params.id}/documenten`;
-      const docsRes = await fetch(docsUrl, {
-        headers: { Authorization: authHeader, Accept: "application/json" },
-      });
-      if (docsRes.ok) {
-        documents = await docsRes.json();
-      }
-    } catch (e) {
-      console.warn("Document fetch failed", e);
-    }
-
-    // Optioneel: vragen ophalen
-    let questions: any[] = [];
-    try {
-      const qUrl = `${BASE_URL}/publicaties/${params.id}/vragen`;
-      const qRes = await fetch(qUrl, {
-        headers: { Authorization: authHeader, Accept: "application/json" },
-      });
-      if (qRes.ok) {
-        questions = await qRes.json();
-      }
-    } catch (e) {
-      console.warn("Question fetch failed", e);
-    }
+    // Fetch alle tabjes parallel
+    const [publication, documents, questions, xmlData] = await Promise.all([
+      fetchJson(`${BASE_URL}/publicaties/${id}/publicatie`),
+      fetchJson(`${BASE_URL}/publicaties/${id}/documenten`),
+      fetchJson(`${BASE_URL}/publicaties/${id}/vragen`),
+      fetchXml(`${BASE_URL}/publicaties/${id}/public-xml`),
+    ]);
 
     return NextResponse.json({
-      id: params.id,
-      publication: body,
+      id,
+      publication,
       documents,
       questions,
+      xmlData,
     });
-  } catch (error: any) {
-    console.error("Full fetch error", error);
+  } catch (err: any) {
     return NextResponse.json(
       {
         error: "TenderNed API full fetch failed",
-        details: error.message,
+        details: err.message,
       },
       { status: 500 }
     );
