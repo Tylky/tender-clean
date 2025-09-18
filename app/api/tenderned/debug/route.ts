@@ -12,50 +12,46 @@ export async function GET() {
     );
   }
 
-  // Test: pak 1 publicatie op met onlyGunningProcedure
   const url =
     "https://www.tenderned.nl/papi/tenderned-rs-tns/v2/publicaties?onlyGunningProcedure=true&pageSize=1";
 
-  try {
-    const res = await fetch(url, {
-      method: "GET",
-      headers: {
-        Authorization:
-          "Basic " +
-          Buffer.from(`${username}:${password}`).toString("base64"),
-        Accept: "application/xml;charset=UTF-8",
-      },
-      cache: "no-store",
-      redirect: "follow",
-    });
+  const variants = [
+    { label: "xml", headers: { Accept: "application/xml" } },
+    { label: "textxml", headers: { Accept: "text/xml" } },
+    { label: "none", headers: {} },
+  ];
 
-    const text = await res.text();
+  const results: any[] = [];
 
-    // Verzamel alle response headers
-    const headers: Record<string, string> = {};
-    res.headers.forEach((value, key) => {
-      headers[key] = value;
-    });
-
-    return NextResponse.json({
-      request: {
-        url,
+  for (const variant of variants) {
+    try {
+      const res = await fetch(url, {
+        method: "GET",
         headers: {
-          Authorization: "[REDACTED]", // niet loggen ivm veiligheid
-          Accept: "application/xml;charset=UTF-8",
+          Authorization:
+            "Basic " +
+            Buffer.from(`${username}:${password}`).toString("base64"),
+          ...variant.headers,
         },
-      },
-      response: {
+        cache: "no-store",
+      });
+
+      const text = await res.text();
+
+      results.push({
+        variant: variant.label,
         status: res.status,
         ok: res.ok,
-        headers,
-        body: text, // hele body tonen (kan groot zijn!)
-      },
-    });
-  } catch (err: any) {
-    return NextResponse.json(
-      { error: "TenderNed API error (debug)", details: err.message },
-      { status: 500 }
-    );
+        headers: Object.fromEntries(res.headers.entries()),
+        bodySample: text.slice(0, 300),
+      });
+    } catch (err: any) {
+      results.push({
+        variant: variant.label,
+        error: err.message,
+      });
+    }
   }
+
+  return NextResponse.json({ url, results });
 }
