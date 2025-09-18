@@ -2,76 +2,72 @@
 import { NextResponse } from "next/server";
 import { XMLParser } from "fast-xml-parser";
 
-const BASE_URL = "https://www.tenderned.nl/papi/tenderned-rs-tns/v2";
-
-function getAuthHeader() {
-  const username = process.env.TENDERNED_USER;
-  const password = process.env.TENDERNED_PASSWORD;
-  if (!username || !password) {
-    throw new Error("Missing TENDERNED_USER or TENDERNED_PASSWORD in environment variables");
-  }
-  return "Basic " + Buffer.from(`${username}:${password}`).toString("base64");
-}
-
-async function fetchJson(url: string) {
-  const res = await fetch(url, {
-    headers: {
-      Authorization: getAuthHeader(),
-      Accept: "application/json",
-    },
-    cache: "no-store",
-  });
-  if (!res.ok) {
-    throw new Error(`JSON fetch failed ${res.status}: ${res.statusText}`);
-  }
-  return res.json();
-}
-
-async function fetchXml(url: string) {
-  const res = await fetch(url, {
-    headers: {
-      Authorization: getAuthHeader(),
-      Accept: "application/xml",
-    },
-    cache: "no-store",
-  });
-  if (!res.ok) {
-    throw new Error(`XML fetch failed ${res.status}: ${res.statusText}`);
-  }
-  const text = await res.text();
-  const parser = new XMLParser({ ignoreAttributes: false });
-  return parser.parse(text);
-}
-
-// Fouttolerante wrappers
-async function safeFetchJson(url: string) {
-  try {
-    return await fetchJson(url);
-  } catch (err: any) {
-    if (err.message.includes("404")) return null;
-    return { error: err.message };
-  }
-}
-
-async function safeFetchXml(url: string) {
-  try {
-    return await fetchXml(url);
-  } catch (err: any) {
-    if (err.message.includes("404")) return null;
-    return { error: err.message };
-  }
-}
-
-export async function GET(req: Request, { params }: { params: { id: string } }) {
+export async function GET(
+  request: Request,
+  { params }: { params: { id: string } }
+) {
   const { id } = params;
 
   try {
-    const [publication, documents, questions, xmlData] = await Promise.all([
-      safeFetchJson(`${BASE_URL}/publicaties/${id}/publicatie`),
-      safeFetchJson(`${BASE_URL}/publicaties/${id}/documenten`),
-      safeFetchJson(`${BASE_URL}/publicaties/${id}/vragen`),
-      safeFetchXml(`${BASE_URL}/publicaties/${id}/public-xml`),
-    ]);
+    const username = process.env.TENDERNED_USER;
+    const password = process.env.TENDERNED_PASS;
+    const baseUrl =
+      process.env.TENDERNED_URL ||
+      "https://www.tenderned.nl/papi/tenderned-rs-tns/v2";
+
+    if (!username || !password) {
+      return NextResponse.json(
+        { error: "Missing TENDERNED_USER or TENDERNED_PASS in environment variables" },
+        { status: 500 }
+      );
+    }
+
+    const auth = Buffer.from(`${username}:${password}`).toString("base64");
+
+    // helper fetch-functie
+    async function fetchJson(url: string) {
+      const res = await fetch(url, {
+        headers: {
+          Authorization: `Basic ${auth}`,
+          Accept: "application/json",
+        },
+        cache: "no-store",
+      });
+      if (!res.ok) return null;
+      return res.json();
+    }
+
+    // 1. Basisdetails
+    const publication = await fetchJson(`${baseUrl}/publicaties/${id}`);
+
+    // 2. Documenten
+    const documents = await fetchJson(`${baseUrl}/publicaties/${id}/documenten`);
+
+    // 3. Vragen & Antwoorden
+    const questions = await fetchJson(`${baseUrl}/publicaties/${id}/vragen`);
+
+    // 4. XML fallback
+    let xmlData = null;
+    const xmlRes = await fetch(`${baseUrl}/publicaties/${id}/public-xml`, {
+      headers: {
+        Authorization: `Basic ${auth}`,
+        Accept: "*/*", // belangrijk, anders 406
+      },
+      cache: "no-store",
+    });
+    if (xmlRes.ok) {
+      const xmlText = await xmlRes.text();
+      const parser = new XMLParser({ ignoreAttributes: false });
+      xmlData = parser.parse(xmlText);
+    }
+
+    // Als alles faalt
+    if (!publication && !documents && !questions && !xmlData) {
+      return NextResponse.json(
+        { error: "Geen gegevens gevonden voor publicatie", id },
+        { status: 404 }
+      );
+    }
 
     return NextResponse.json({
       id,
@@ -80,12 +76,10 @@ export async function GET(req: Request, { params }: { params: { id: string } }) 
       questions,
       xmlData,
     });
-  } catch (err: any) {
+  } catch (error: any) {
+    console.error("TenderNed API full fetch error:", error);
     return NextResponse.json(
-      {
-        error: "TenderNed API full fetch failed",
-        details: err.message,
-      },
+      { error: "TenderNed API full fetch failed", details: error.message },
       { status: 500 }
     );
   }
